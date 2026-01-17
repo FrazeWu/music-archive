@@ -1,0 +1,20 @@
+FROM --platform=linux/arm64 golang:1.23-alpine
+
+RUN apk add --no-cache gcc musl-dev sqlite-dev
+
+ENV GOPROXY=https://goproxy.cn,https://mirrors.aliyun.com/goproxy/,direct
+ENV GO111MODULE=on
+ENV CGO_ENABLED=1
+
+WORKDIR /app
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=1 go build -o main .
+
+EXPOSE 8080
+
+CMD ["./main"]
