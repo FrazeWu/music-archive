@@ -17,11 +17,22 @@ This directory is for SSL certificates if you want to use Cloudflare Origin Cert
 #### Steps:
 1. Go to Cloudflare Dashboard → SSL/TLS → Origin Server
 2. Create Origin Certificate
-3. Download certificate and private key
+3. Copy certificate and private key from Cloudflare
 4. Save files here:
-   - `nginx/ssl/cert.pem` - Certificate
-   - `nginx/ssl/key.pem` - Private key
-5. Uncomment HTTPS configuration in `web/nginx.conf`
+   - `nginx/ssl/cert.pem` - Certificate (paste from Cloudflare)
+   - `nginx/ssl/key.pem` - Private key (paste from Cloudflare)
+   
+   **Note:** `.pem` and `.crt` formats are identical. Cloudflare provides PEM format which works perfectly with Nginx.
+   
+5. Update nginx configuration:
+   ```bash
+   cp nginx/nginx-ssl.conf web/nginx.conf
+   ```
+6. Rebuild containers:
+   ```bash
+   docker-compose down
+   docker-compose up --build -d
+   ```
 
 ### Option 3: Full SSL (Strict)
 - Use your own SSL certificate (Let's Encrypt, etc.)
