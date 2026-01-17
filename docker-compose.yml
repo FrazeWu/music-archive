@@ -1,21 +1,4 @@
 services:
-  frontend:
-    build:
-      context: .
-      dockerfile: ./web/Dockerfile
-    ports:
-      - "80:80"
-      - "443:443"
-    depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - app-network
-    environment:
-      - NGINX_HOST=${DOMAIN:-localhost}
-    volumes:
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-
   backend:
     build:
       context: ./server
@@ -34,6 +17,24 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  frontend:
+    build:
+      context: .
+      dockerfile: ./web/Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - app-network
+    environment:
+      - NGINX_HOST=${DOMAIN:-localhost}
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl:ro
 
 networks:
   app-network:
