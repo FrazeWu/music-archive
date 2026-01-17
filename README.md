@@ -334,7 +334,22 @@ go run cmd/create_admin/main.go
 
 ## Deployment
 
-### Using Docker Compose (Recommended)
+### Production with Cloudflare (Recommended)
+
+For detailed Cloudflare setup with SSL/TLS, CDN, and optimization, see [CLOUDFLARE_DEPLOYMENT.md](CLOUDFLARE_DEPLOYMENT.md).
+
+**Quick Start:**
+
+1. **Point domain to server via Cloudflare DNS**
+2. **Configure SSL in Cloudflare:**
+   - Flexible SSL: No setup needed (current config)
+   - Full SSL: Add Cloudflare Origin Certificate to `nginx/ssl/`
+3. **Deploy:**
+   ```bash
+   docker-compose up -d
+   ```
+
+### Using Docker Compose
 
 ```bash
 # Production deployment

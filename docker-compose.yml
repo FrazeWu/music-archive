@@ -5,24 +5,39 @@ services:
       dockerfile: ./web/Dockerfile
     ports:
       - "80:80"
+      - "443:443"
     depends_on:
       - backend
     restart: unless-stopped
     networks:
       - app-network
+    environment:
+      - NGINX_HOST=${DOMAIN:-localhost}
+    volumes:
+      - ./nginx/ssl:/etc/nginx/ssl:ro
 
   backend:
     build:
       context: ./server
       dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       - ./server/.env.production:/app/.env:ro
+      - upload-data:/app/uploads
     restart: unless-stopped
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/api/songs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
 networks:
   app-network:
     driver: bridge
+
+volumes:
+  upload-data:
