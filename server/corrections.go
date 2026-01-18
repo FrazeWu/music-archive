@@ -41,7 +41,15 @@ func SetupCorrectionRoutes(router *gin.Engine, db *gorm.DB) {
 
 func CreateCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, _ := c.Get("user_id")
+		var uid uint
+		if idVal, exists := c.Get("user_id"); exists {
+			if fID, ok := idVal.(float64); ok {
+				uid = uint(fID)
+			} else if uID, ok := idVal.(uint); ok {
+				uid = uID
+			}
+		}
+
 		var input CorrectionInput
 
 		if err := c.ShouldBindJSON(&input); err != nil {
@@ -56,7 +64,7 @@ func CreateCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 			CurrentValue:   input.CurrentValue,
 			CorrectedValue: input.CorrectedValue,
 			Reason:         input.Reason,
-			UserID:         &[]uint{userID.(uint)}[0],
+			UserID:         &uid,
 		}
 
 		if err := db.Create(&correction).Error; err != nil {
@@ -71,7 +79,15 @@ func CreateCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 
 func CreateBatchCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userID, _ := c.Get("user_id")
+		var uid uint
+		if idVal, exists := c.Get("user_id"); exists {
+			if fID, ok := idVal.(float64); ok {
+				uid = uint(fID)
+			} else if uID, ok := idVal.(uint); ok {
+				uid = uID
+			}
+		}
+
 		var input BatchCorrectionInput
 
 		if err := c.ShouldBindJSON(&input); err != nil {
@@ -94,7 +110,7 @@ func CreateBatchCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 						CurrentValue:   item.CurrentValue,
 						CorrectedValue: item.CorrectedValue,
 						Reason:         input.Reason,
-						UserID:         &[]uint{userID.(uint)}[0],
+						UserID:         &uid,
 					})
 				}
 			}
@@ -105,7 +121,7 @@ func CreateBatchCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 					FieldName:      "artist",
 					CorrectedValue: input.Artist,
 					Reason:         input.Reason,
-					UserID:         &[]uint{userID.(uint)}[0],
+					UserID:         &uid,
 				})
 			}
 			if input.Album != "" {
@@ -114,7 +130,7 @@ func CreateBatchCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 					FieldName:      "album",
 					CorrectedValue: input.Album,
 					Reason:         input.Reason,
-					UserID:         &[]uint{userID.(uint)}[0],
+					UserID:         &uid,
 				})
 			}
 			if input.ReleaseDate != "" {
@@ -123,7 +139,7 @@ func CreateBatchCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 					FieldName:      "release_date",
 					CorrectedValue: input.ReleaseDate,
 					Reason:         input.Reason,
-					UserID:         &[]uint{userID.(uint)}[0],
+					UserID:         &uid,
 				})
 			}
 		}
