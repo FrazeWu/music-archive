@@ -1,53 +1,96 @@
 
 <script setup lang="ts">
-import { reactive, ref, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { reactive, ref, onMounted, computed } from 'vue';
+import { useRouter, useRoute } from 'vue-router';
 import { useApi } from '@/composables/useApi';
 import { useAuthStore } from '@/stores/auth';
+import { usePlayerStore } from '@/stores/player.ts';
 
-interface TrackFile {
+interface TrackItem {
   id: string;
-  file: File;
   title: string;
+  track_number: number;
+  isExisting: boolean;
+  file?: File;
+  songId?: number;
 }
 
 const router = useRouter();
+const route = useRoute();
 const authStore = useAuthStore();
+const playerStore = usePlayerStore();
 const api = useApi();
 
+const singerName = decodeURIComponent(route.params.artist as string).replace(/_/g, ' ');
+const albumName = decodeURIComponent(route.params.album as string).replace(/_/g, ' ');
+
 const formData = reactive({
-  artist: 'Kanye West',
+  artist: '',
   album: '',
-  releaseDate: new Date().toISOString().split('T')[0],
-  source: '',
+  releaseDate: '',
 });
 
-const tracks = ref<TrackFile[]>([]);
+const tracks = ref<TrackItem[]>([]);
 const fileInput = ref<HTMLInputElement | null>(null);
 const coverInput = ref<HTMLInputElement | null>(null);
 const coverFile = ref<File | null>(null);
 const coverPreview = ref<string>('');
+const originalCoverUrl = ref<string>('');
 const draggingIndex = ref<number | null>(null);
 
-const isUploading = ref(false);
+const isLoading = ref(true);
+const isSaving = ref(false);
 const currentTrackIndex = ref(0);
 const totalTracks = ref(0);
 
-onMounted(() => {
+const albumSongs = computed(() => {
+  return playerStore.songs.filter(song => song.album === albumName && song.artist === singerName);
+});
+
+onMounted(async () => {
   if (!authStore.isAuthenticated) {
     router.push('/login');
+    return;
   }
+
+  await playerStore.fetchSongs();
+  
+  if (albumSongs.value.length === 0) {
+    alert('专辑未找到');
+    router.push('/');
+    return;
+  }
+
+  const firstSong = albumSongs.value[0];
+  formData.artist = firstSong.artist;
+  formData.album = firstSong.album;
+  formData.releaseDate = firstSong.release_date;
+  
+  originalCoverUrl.value = firstSong.cover_url || '';
+  coverPreview.value = firstSong.cover_url || '';
+
+  tracks.value = albumSongs.value.map((song, index) => ({
+    id: `existing-${song.id}`,
+    title: song.title,
+    track_number: index + 1,
+    isExisting: true,
+    songId: song.id
+  }));
+
+  isLoading.value = false;
 });
 
 const parseAndSortTracks = (files: FileList) => {
-  const newTracks: TrackFile[] = [];
+  const newTracks: TrackItem[] = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     const title = file.name.replace(/\.[^/.]+$/, "");
     newTracks.push({
       id: Math.random().toString(36).substr(2, 9),
-      file,
-      title
+      title,
+      track_number: tracks.value.length + i + 1,
+      isExisting: false,
+      file
     });
   }
 
@@ -101,7 +144,14 @@ const removeCover = () => {
 };
 
 const removeTrack = (index: number) => {
-  tracks.value.splice(index, 1);
+  const track = tracks.value[index];
+  if (track.isExisting) {
+    if (confirm(`确定要删除歌曲 "${track.title}" 吗？这将从数据库中永久删除该歌曲。`)) {
+      tracks.value.splice(index, 1);
+    }
+  } else {
+    tracks.value.splice(index, 1);
+  }
 };
 
 const removeAllTracks = () => {
@@ -129,39 +179,64 @@ const onDrop = (dropIndex: number) => {
 };
 
 const handleSubmit = async () => {
+  console.log('handleSubmit called');
+  console.log('tracks:', tracks.value);
+  
   if (tracks.value.length === 0) {
-    alert('请至少选择一个音频文件');
+    alert('至少需要保留一首歌曲');
     return;
   }
   
-  isUploading.value = true;
+  if (!confirm('提交修改后将进入审核队列，管理员批准后才会生效。确定要提交吗？')) {
+    console.log('User cancelled');
+    return;
+  }
+
+  console.log('Starting submission...');
+  isSaving.value = true;
   totalTracks.value = tracks.value.length;
   currentTrackIndex.value = 0;
 
   const batchId = crypto.randomUUID();
-
   let successCount = 0;
   let failCount = 0;
+  let duplicateCount = 0;
 
+  // 为所有歌曲创建新的待审核版本
   for (let i = 0; i < tracks.value.length; i++) {
     const track = tracks.value[i];
     currentTrackIndex.value = i + 1;
+    
+    console.log(`Processing track ${i + 1}/${tracks.value.length}:`, track.title);
 
     const data = new FormData();
-     data.append('title', track.title);
-     data.append('artist', formData.artist);
-     data.append('album', formData.album);
-     data.append('release_date', formData.releaseDate);
-     data.append('source', formData.source);
-     data.append('track_number', (i + 1).toString());
-     data.append('audio', track.file);
-     data.append('batch_id', batchId);
+    data.append('title', track.title);
+    data.append('artist', formData.artist);
+    data.append('album', formData.album);
+    data.append('release_date', formData.releaseDate);
+    data.append('track_number', (i + 1).toString());
+    data.append('batch_id', batchId);
     
-    if (coverFile.value && i === 0) {
+    // 如果是新歌曲，需要上传音频文件
+    if (!track.isExisting && track.file) {
+      data.append('audio', track.file);
+    } else if (track.isExisting) {
+      // 对于现有歌曲，使用原有的音频URL（后端需要支持这个字段）
+      const originalSong = albumSongs.value.find(s => s.id === track.songId);
+      if (originalSong) {
+        data.append('audio_url', originalSong.audio_url);
+      }
+    }
+    
+    // 如果是第一首歌且有封面，添加封面
+    if (i === 0 && coverFile.value) {
       data.append('cover', coverFile.value);
+    } else if (i === 0 && !coverFile.value && originalCoverUrl.value) {
+      data.append('cover_url', originalCoverUrl.value);
     }
 
     try {
+      console.log(`Submitting track: ${track.title}`);
       const response = await fetch(`${api.url}/songs`, {
         method: 'POST',
         headers: {
@@ -170,45 +245,69 @@ const handleSubmit = async () => {
         body: data
       });
 
+      console.log(`Response for ${track.title}:`, response.status, response.ok);
+      
       if (response.ok) {
-        successCount++;
+        const result = await response.json();
+        console.log('Result:', result);
+        // 检查是否是已存在的歌曲（通过检查返回的歌曲状态）
+        if (result.status && result.status !== 'pending') {
+          duplicateCount++;
+          console.log('Duplicate song detected');
+        } else {
+          successCount++;
+          console.log('New song added');
+        }
       } else {
         failCount++;
-        console.error(`Failed to upload ${track.title}`, await response.json());
+        const error = await response.json();
+        console.error(`Failed to submit ${track.title}`, error);
       }
     } catch (e) {
       failCount++;
-      console.error(`Error uploading ${track.title}`, e);
+      console.error(`Error submitting ${track.title}`, e);
     }
   }
   
-  isUploading.value = false;
+  isSaving.value = false;
   currentTrackIndex.value = 0;
   totalTracks.value = 0;
 
-  if (successCount > 0) {
-    alert(`上传完成！成功: ${successCount} 首，失败: ${failCount} 首。等待管理员审核。`);
-     if (failCount === 0) {
-       formData.album = '';
-       formData.source = '';
-       tracks.value = [];
-       coverFile.value = null;
-       coverPreview.value = '';
-     }
+  if (successCount > 0 || duplicateCount > 0) {
+    let message = '提交完成！';
+    if (successCount > 0) message += `\n新增: ${successCount} 首`;
+    if (duplicateCount > 0) message += `\n已存在(跳过): ${duplicateCount} 首`;
+    if (failCount > 0) message += `\n失败: ${failCount} 首`;
+    if (successCount > 0) message += '\n等待管理员批准后生效。';
+    
+    alert(message);
+    if (failCount === 0) {
+      router.back();
+    }
   } else {
-    alert('上传失败，请重试。');
+    alert('提交失败，请重试。');
+  }
+};
+
+const cancel = () => {
+  if (confirm('确定要取消编辑吗？未保存的更改将丢失。')) {
+    router.back();
   }
 };
 </script>
 
 <template>
   <div class="max-w-3xl mx-auto px-8 py-20">
-    <h1 class="text-4xl font-black tracking-tighter mb-8">贡献新档案</h1>
+    <h1 class="text-4xl font-black tracking-tighter mb-8">编辑专辑</h1>
     <p class="text-gray-500 mb-12">
-      帮助我们完善 Ye 的音乐史料库。支持批量上传和拖拽排序。
+      修改专辑信息、封面，以及添加、删除、排序歌曲。
     </p>
 
-    <form class="space-y-8">
+    <div v-if="isLoading" class="text-center py-20">
+      <p class="text-xl font-bold text-gray-400">加载中...</p>
+    </div>
+
+    <form v-else class="space-y-8">
       <div class="grid grid-cols-2 gap-8">
         <div class="space-y-4">
           <label class="block text-sm font-black uppercase tracking-widest">艺术家</label>
@@ -240,18 +339,8 @@ const handleSubmit = async () => {
          />
        </div>
 
-       <div class="space-y-4">
-         <label class="block text-sm font-black uppercase tracking-widest">信息来源</label>
-         <input
-           type="text"
-           placeholder="例如：官方网站、维基百科、音乐平台等"
-           class="w-full bg-white border-2 border-black p-4 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all"
-           v-model="formData.source"
-         />
-       </div>
-
       <div class="space-y-4">
-        <label class="block text-sm font-black uppercase tracking-widest">专辑封面（可选，不上传默认为纯黑）</label>
+        <label class="block text-sm font-black uppercase tracking-widest">专辑封面</label>
         <input 
           type="file" 
           ref="coverInput" 
@@ -263,8 +352,8 @@ const handleSubmit = async () => {
           @click="triggerCoverInput"
           class="border-2 border-dashed border-black p-12 text-center cursor-pointer hover:bg-gray-100 transition-colors"
         >
-          <p class="font-bold">点击上传封面图片</p>
-          <p class="text-xs text-gray-400 mt-2">不上传将默认为纯黑色</p>
+          <p class="font-bold">点击上传新封面图片</p>
+          <p class="text-xs text-gray-400 mt-2">不上传将保持原封面或默认为纯黑色</p>
         </div>
         <div v-else class="relative border-2 border-black inline-block">
           <img :src="coverPreview" class="w-48 h-48 object-cover grayscale" alt="封面预览" />
@@ -275,11 +364,18 @@ const handleSubmit = async () => {
           >
             删除
           </button>
+          <button 
+            type="button"
+            @click="triggerCoverInput"
+            class="absolute bottom-2 right-2 bg-black text-white px-3 py-1 text-xs font-bold hover:bg-gray-700"
+          >
+            更换
+          </button>
         </div>
       </div>
 
       <div class="space-y-4">
-        <label class="block text-sm font-black uppercase tracking-widest">音频文件 (支持多选)</label>
+        <label class="block text-sm font-black uppercase tracking-widest">添加新歌曲 (支持多选)</label>
         <input 
           type="file" 
           ref="fileInput" 
@@ -292,8 +388,8 @@ const handleSubmit = async () => {
           @click="triggerFileInput"
           class="border-2 border-dashed border-black p-12 text-center cursor-pointer hover:bg-gray-100 transition-colors"
         >
-          <p class="font-bold">点击选择多个音频文件</p>
-          <p class="text-xs text-gray-400 mt-2">支持批量上传</p>
+          <p class="font-bold">点击选择音频文件</p>
+          <p class="text-xs text-gray-400 mt-2">支持批量添加</p>
         </div>
       </div>
 
@@ -331,8 +427,16 @@ const handleSubmit = async () => {
                 class="w-full font-bold outline-none border-b border-transparent focus:border-black transition-colors"
                 placeholder="歌曲名称"
               />
-              <p class="text-xs text-gray-400 truncate">{{ track.file.name }}</p>
+              <p class="text-xs text-gray-400 truncate">
+                {{ track.isExisting ? '现有歌曲' : track.file?.name }}
+              </p>
             </div>
+            <span v-if="track.isExisting" class="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded font-bold">
+              已存在
+            </span>
+            <span v-else class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded font-bold">
+              新增
+            </span>
             <button 
               type="button" 
               @click="removeTrack(index)"
@@ -345,9 +449,9 @@ const handleSubmit = async () => {
       </div>
 
       <!-- Progress Display -->
-      <div v-if="isUploading" class="space-y-2 pt-4">
+      <div v-if="isSaving" class="space-y-2 pt-4">
         <div class="flex justify-between items-center text-sm font-bold">
-          <span>正在上传: {{ currentTrackIndex }} / {{ totalTracks }}</span>
+          <span>正在保存: {{ currentTrackIndex }} / {{ totalTracks }}</span>
           <span>
             {{ Math.round((currentTrackIndex / totalTracks) * 100) }}%
           </span>
@@ -363,16 +467,26 @@ const handleSubmit = async () => {
         </p>
       </div>
 
-
-      <button 
-        type="button"
-        @click="handleSubmit"
-        class="w-full bg-black text-white py-6 font-black uppercase tracking-widest hover:bg-white hover:text-black border-2 border-black transition-all"
-        :disabled="tracks.length === 0 || isUploading"
-        :class="{ 'opacity-50 cursor-not-allowed': tracks.length === 0 || isUploading }"
-      >
-        {{ isUploading ? '正在提交...' : `提交至审核队列 (${tracks.length} 首)` }}
-      </button>
+      <div class="flex gap-4">
+        <button 
+          type="button"
+          @click="handleSubmit"
+          class="flex-1 bg-black text-white py-6 font-black uppercase tracking-widest hover:bg-white hover:text-black border-2 border-black transition-all"
+          :disabled="tracks.length === 0 || isSaving"
+          :class="{ 'opacity-50 cursor-not-allowed': tracks.length === 0 || isSaving }"
+        >
+          {{ isSaving ? '正在保存...' : `保存更改 (${tracks.length} 首)` }}
+        </button>
+        <button 
+          type="button"
+          @click="cancel"
+          class="flex-1 border-2 border-black py-6 font-black uppercase tracking-widest hover:bg-black hover:text-white transition-all"
+          :disabled="isSaving"
+          :class="{ 'opacity-50 cursor-not-allowed': isSaving }"
+        >
+          取消
+        </button>
+      </div>
     </form>
   </div>
 </template>

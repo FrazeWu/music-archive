@@ -65,6 +65,7 @@ type Song struct {
 	Lyrics      string    `json:"lyrics" gorm:"type:text"`
 	AudioURL    string    `json:"audio_url" gorm:"not null"`
 	CoverURL    string    `json:"cover_url"`
+	BatchID     string    `json:"batch_id" gorm:"index"`
 	Status      string    `json:"status" gorm:"default:'pending'"` // 'pending', 'approved', 'rejected'
 	AlbumID     *uint     `json:"album_id"`
 	Album       *Album    `json:"album,omitempty"`

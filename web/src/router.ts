@@ -4,6 +4,7 @@ import UploadView from "@/views/UploadView.vue";
 import LoginView from "@/views/LoginView.vue";
 import AdminReviewView from "@/views/AdminReviewView.vue";
 import AlbumDetailView from "@/views/AlbumDetailView.vue";
+import EditAlbumView from "@/views/EditAlbumView.vue";
 import AboutView from "@/views/AboutView.vue";
 import { useAuthStore } from "@/stores/auth";
 
@@ -11,6 +12,7 @@ const routes = [
   { path: "/", component: HomeView },
   { path: "/about", component: AboutView },
   { path: "/artist=:artist/album=:album", component: AlbumDetailView },
+  { path: "/artist=:artist/album=:album/edit", component: EditAlbumView },
   { path: "/upload", component: UploadView },
   { path: "/login", component: LoginView },
   { path: "/register", component: LoginView },

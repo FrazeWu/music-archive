@@ -1,4 +1,3 @@
-
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useRoute, RouterLink } from 'vue-router';
@@ -113,27 +112,28 @@ player.fetchSongs();
 
     <div v-if="albumInfo" class="space-y-8">
       <div class="flex gap-8 items-start">
-        <img 
-          :src="albumInfo.cover || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22300%22%3E%3Crect width=%22300%22 height=%22300%22 fill=%22%23000%22/%3E%3C/svg%3E'" 
-          class="w-64 h-64 border-4 border-black grayscale object-cover flex-shrink-0 shadow-[15px_15px_0px_0px_rgba(0,0,0,1)]" 
-          :alt="albumInfo.title" 
-        />
+        <img
+          :src="albumInfo.cover || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22300%22%3E%3Crect width=%22300%22 height=%22300%22 fill=%22%23000%22/%3E%3C/svg%3E'"
+          class="w-64 h-64 border-4 border-black grayscale object-cover flex-shrink-0 shadow-[15px_15px_0px_0px_rgba(0,0,0,1)]"
+          :alt="albumInfo.title" />
         <div class="flex-1">
           <h1 class="text-5xl font-black tracking-tighter mb-2">{{ albumInfo.title }}</h1>
           <p class="text-xl font-bold text-gray-600 mb-1">{{ albumInfo.artist }}</p>
-          <p class="text-lg text-gray-500 mb-6">{{ albumInfo.releaseDate }} · {{ albumInfo.trackCount }} {{ albumInfo.trackCount === 1 ? 'track' : 'tracks' }}</p>
-          
+          <p class="text-lg text-gray-500 mb-6">{{ albumInfo.releaseDate }} · {{ albumInfo.trackCount }} {{
+            albumInfo.trackCount === 1 ? 'track' : 'tracks' }}</p>
+
           <div class="flex gap-4">
-             <button
-               @click="player.playSong(albumSongs[0])"
-               class="bg-white text-black px-8 py-4 font-black text-sm uppercase tracking-widest hover:bg-black hover:text-white border-4 border-black transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none"
-             >
-               ▶ 播放专辑
-             </button>
-            <button 
-              @click="openCorrectionModal"
-              class="border-4 border-black px-8 py-4 font-black text-sm uppercase tracking-widest hover:bg-black hover:text-white transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none"
-            >
+            <button @click="player.playSong(albumSongs[0])"
+              class="bg-white text-black px-8 py-4 font-black text-sm uppercase tracking-widest hover:bg-black hover:text-white border-4 border-black transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none">
+              ▶ 播放专辑
+            </button>
+            <RouterLink v-if="authStore.isAuthenticated"
+              :to="`/artist=${singerName.replace(/ /g, '_')}/album=${albumName.replace(/ /g, '_')}/edit`"
+              class="border-4 border-black px-8 py-4 font-black text-sm uppercase tracking-widest hover:bg-black hover:text-white transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none inline-block text-center">
+              编辑专辑
+            </RouterLink>
+            <button v-else @click="openCorrectionModal"
+              class="border-4 border-black px-8 py-4 font-black text-sm uppercase tracking-widest hover:bg-black hover:text-white transition-all shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] hover:shadow-none">
               修正信息
             </button>
           </div>
@@ -145,22 +145,17 @@ player.fetchSongs();
           <h2 class="font-black uppercase tracking-widest text-sm">歌曲列表</h2>
         </div>
         <div class="divide-y-2 divide-gray-100">
-          <div 
-            v-for="(song, index) in albumSongs" 
-            :key="song.id" 
-            class="flex items-center gap-6 px-6 py-4 hover:bg-gray-50 transition-colors"
-          >
-            <span class="text-xl font-black text-gray-400 w-12 text-right">{{ String(index + 1).padStart(2, '0') }}</span>
+          <div v-for="(song, index) in albumSongs" :key="song.id"
+            class="flex items-center gap-6 px-6 py-4 hover:bg-gray-50 transition-colors">
+            <span class="text-xl font-black text-gray-400 w-12 text-right">{{ String(index + 1).padStart(2, '0')
+              }}</span>
             <div class="flex-grow">
               <h3 class="font-bold text-lg">{{ song.title }}</h3>
             </div>
-            <button 
-              @click="player.playSong(song)"
-              :class="['border-2 border-black px-5 py-2 font-black text-sm uppercase tracking-widest transition-all', 
-                       (player.currentSong?.id === song.id && player.isPlaying) 
-                         ? 'bg-black text-white' 
-                         : 'hover:bg-black hover:text-white']"
-            >
+            <button @click="player.playSong(song)" :class="['border-2 border-black px-5 py-2 font-black text-sm uppercase tracking-widest transition-all',
+              (player.currentSong?.id === song.id && player.isPlaying)
+                ? 'bg-black text-white'
+                : 'hover:bg-black hover:text-white']">
               {{ (player.currentSong?.id === song.id && player.isPlaying) ? '⏸ 暂停' : '▶ 播放' }}
             </button>
           </div>
@@ -168,63 +163,47 @@ player.fetchSongs();
       </div>
     </div>
 
-    <div v-if="showCorrectionModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" @click.self="showCorrectionModal = false">
+    <div v-if="showCorrectionModal"
+      class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+      @click.self="showCorrectionModal = false">
       <div class="bg-white border-4 border-black max-w-2xl w-full p-8 shadow-[20px_20px_0px_0px_rgba(0,0,0,1)]">
-        <h2 class="text-3xl font-black mb-6 tracking-tighter">提交专辑信息修正</h2>
-        
+        <h2 class="text-3xl font-black mb-6 tracking-tighter">专辑信息修正</h2>
+
         <div class="space-y-6">
-           <div>
-             <label class="block text-sm font-black uppercase tracking-widest mb-2">艺术家</label>
-             <input
-               v-model="correctionForm.artist"
-               type="text"
-               class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all"
-               placeholder="艺术家名称"
-             />
-           </div>
+          <div>
+            <label class="block text-sm font-black uppercase tracking-widest mb-2">艺术家</label>
+            <input v-model="correctionForm.artist" type="text"
+              class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all"
+              placeholder="艺术家名称" />
+          </div>
 
-           <div>
-             <label class="block text-sm font-black uppercase tracking-widest mb-2">专辑名称</label>
-             <input
-               v-model="correctionForm.album"
-               type="text"
-               class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all"
-               placeholder="专辑名称"
-             />
-           </div>
+          <div>
+            <label class="block text-sm font-black uppercase tracking-widest mb-2">专辑名称</label>
+            <input v-model="correctionForm.album" type="text"
+              class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all"
+              placeholder="专辑名称" />
+          </div>
 
-           <div>
-             <label class="block text-sm font-black uppercase tracking-widest mb-2">发行日期</label>
-             <input
-               v-model="correctionForm.releaseDate"
-               type="date"
-               class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all"
-             />
-           </div>
+          <div>
+            <label class="block text-sm font-black uppercase tracking-widest mb-2">发行日期</label>
+            <input v-model="correctionForm.releaseDate" type="date"
+              class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all" />
+          </div>
 
-           <div>
-             <label class="block text-sm font-black uppercase tracking-widest mb-2">修正原因</label>
-             <textarea
-               v-model="correctionForm.reason"
-               rows="3"
-               class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all resize-none"
-               placeholder="请详细说明修正原因"
-             ></textarea>
-           </div>
+          <div>
+            <label class="block text-sm font-black uppercase tracking-widest mb-2">修正原因</label>
+            <textarea v-model="correctionForm.reason" rows="3"
+              class="w-full border-2 border-black p-3 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all resize-none"
+              placeholder="请详细说明修正原因"></textarea>
+          </div>
 
           <div class="flex gap-4 pt-4">
-            <button 
-              @click="submitCorrection"
-              :disabled="isSubmitting"
-              class="flex-1 bg-black text-white border-2 border-black px-6 py-3 font-black uppercase tracking-widest hover:bg-white hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
+            <button @click="submitCorrection" :disabled="isSubmitting"
+              class="flex-1 bg-black text-white border-2 border-black px-6 py-3 font-black uppercase tracking-widest hover:bg-white hover:text-black transition-all disabled:opacity-50 disabled:cursor-not-allowed">
               {{ isSubmitting ? '提交中...' : '提交修正' }}
             </button>
-            <button 
-              @click="showCorrectionModal = false"
-              :disabled="isSubmitting"
-              class="flex-1 border-2 border-black px-6 py-3 font-black uppercase tracking-widest hover:bg-black hover:text-white transition-all disabled:opacity-50"
-            >
+            <button @click="showCorrectionModal = false" :disabled="isSubmitting"
+              class="flex-1 border-2 border-black px-6 py-3 font-black uppercase tracking-widest hover:bg-black hover:text-white transition-all disabled:opacity-50">
               取消
             </button>
           </div>
