@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     expose:
       - "8080"
+    env_file:
+      - ./server/.env.production
     volumes:
       - ./server/.env.production:/app/.env:ro
       - upload-data:/app/uploads

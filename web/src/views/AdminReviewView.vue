@@ -2,14 +2,17 @@
 import { ref, onMounted } from 'vue';
 import { useAuthStore } from '@/stores/auth';
 import type { PendingSong } from '@/types';
+import { useApi } from '@/composables/useApi';
 
 const authStore = useAuthStore();
 const pendingSongs = ref<PendingSong[]>([]);
 const loading = ref(true);
 
+const api = useApi();
+
 const fetchPendingSongs = async () => {
   try {
-    const response = await fetch('http://localhost:8080/api/admin/pending', {
+    const response = await fetch(`${api.url}/admin/pending`, {
       headers: {
         'Authorization': `Bearer ${authStore.token}`
       }
@@ -27,7 +30,7 @@ const fetchPendingSongs = async () => {
 const handleApprove = async (id: number) => {
   if (!confirm('确认通过此条目？')) return;
   try {
-    const response = await fetch(`http://localhost:8080/api/admin/approve/${id}`, {
+    const response = await fetch(`${api.url}/admin/approve/${id}`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${authStore.token}` }
     });
@@ -42,7 +45,7 @@ const handleApprove = async (id: number) => {
 const handleReject = async (id: number) => {
   if (!confirm('确认驳回此条目？')) return;
   try {
-    const response = await fetch(`http://localhost:8080/api/admin/reject/${id}`, {
+    const response = await fetch(`${api.url}/admin/reject/${id}`, {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${authStore.token}` }
     });

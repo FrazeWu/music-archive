@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { User } from '@/types';
 
-const API_URL = 'http://localhost:8080/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 export const useAuthStore = defineStore('auth', () => {
   const token = ref<string | null>(localStorage.getItem('token'));

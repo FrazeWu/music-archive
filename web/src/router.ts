@@ -10,7 +10,7 @@ import { useAuthStore } from "@/stores/auth";
 const routes = [
   { path: "/", component: HomeView },
   { path: "/about", component: AboutView },
-  { path: "/songer-:artist/album-:album", component: AlbumDetailView },
+  { path: "/artist=:artist/album=:album", component: AlbumDetailView },
   { path: "/upload", component: UploadView },
   { path: "/login", component: LoginView },
   { path: "/register", component: LoginView },

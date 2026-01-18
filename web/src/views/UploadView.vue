@@ -1,12 +1,19 @@
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue';
+import { reactive, ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { useApi } from '@/composables/useApi';
+import { useAuthStore } from '@/stores/auth';
 
 interface TrackFile {
   id: string;
   file: File;
   title: string;
 }
+
+const router = useRouter();
+const authStore = useAuthStore();
+const api = useApi();
 
 const formData = reactive({
   artist: 'Kanye West',
@@ -26,6 +33,12 @@ const isUploading = ref(false);
 const currentTrackIndex = ref(0);
 const totalTracks = ref(0);
 
+onMounted(() => {
+  if (!authStore.isAuthenticated) {
+    router.push('/login');
+  }
+});
+
 const parseAndSortTracks = (files: FileList) => {
   const newTracks: TrackFile[] = [];
   for (let i = 0; i < files.length; i++) {
@@ -38,7 +51,6 @@ const parseAndSortTracks = (files: FileList) => {
     });
   }
 
-  // Sorting logic: prioritize tracks starting with numbers (e.g., 01, 02)
   newTracks.sort((a, b) => {
     const numA = parseInt(a.title.match(/^(\d+)/)?.[0] || '9999');
     const numB = parseInt(b.title.match(/^(\d+)/)?.[0] || '9999');
@@ -92,15 +104,12 @@ const removeTrack = (index: number) => {
   tracks.value.splice(index, 1);
 };
 
-
-
 const removeAllTracks = () => {
   if (confirm('确定要删除所有歌曲吗？')) {
     tracks.value = [];
   }
 };
 
-// Drag and Drop Logic
 const onDragStart = (index: number) => {
   draggingIndex.value = index;
 };
@@ -134,7 +143,7 @@ const handleSubmit = async () => {
 
   for (let i = 0; i < tracks.value.length; i++) {
     const track = tracks.value[i];
-    currentTrackIndex.value = i + 1; // Update track index for display
+    currentTrackIndex.value = i + 1;
 
     const data = new FormData();
      data.append('title', track.title);
@@ -145,16 +154,15 @@ const handleSubmit = async () => {
      data.append('track_number', (i + 1).toString());
      data.append('audio', track.file);
     
-    // Add cover file for first track only, or add for all if you want each song to have the cover
     if (coverFile.value && i === 0) {
       data.append('cover', coverFile.value);
     }
 
     try {
-      const response = await fetch('http://localhost:8080/api/songs', {
+      const response = await fetch(`${api.url}/songs`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${authStore.token}`
         },
         body: data
       });
@@ -197,7 +205,7 @@ const handleSubmit = async () => {
       帮助我们完善 Ye 的音乐史料库。支持批量上传和拖拽排序。
     </p>
 
-    <form @submit.prevent="handleSubmit" class="space-y-8">
+    <form class="space-y-8">
       <div class="grid grid-cols-2 gap-8">
         <div class="space-y-4">
           <label class="block text-sm font-black uppercase tracking-widest">艺术家</label>
@@ -354,7 +362,8 @@ const handleSubmit = async () => {
 
 
       <button 
-        type="submit"
+        type="button"
+        @click="handleSubmit"
         class="w-full bg-black text-white py-6 font-black uppercase tracking-widest hover:bg-white hover:text-black border-2 border-black transition-all"
         :disabled="tracks.length === 0 || isUploading"
         :class="{ 'opacity-50 cursor-not-allowed': tracks.length === 0 || isUploading }"

@@ -4,12 +4,13 @@ import { computed, ref } from 'vue';
 import { useRoute, RouterLink } from 'vue-router';
 import { usePlayerStore } from '@/stores/player.ts';
 import { useAuthStore } from '@/stores/auth';
+import { useApi } from '@/composables/useApi';
 
 const route = useRoute();
 const player = usePlayerStore();
 const authStore = useAuthStore();
 
-const artistName = decodeURIComponent(route.params.artist as string).replace(/_/g, ' ');
+const singerName = decodeURIComponent(route.params.artist as string).replace(/_/g, ' ');
 const albumName = decodeURIComponent(route.params.album as string).replace(/_/g, ' ');
 
 const showCorrectionModal = ref(false);
@@ -21,14 +22,10 @@ const correctionForm = ref({
 });
 const isSubmitting = ref(false);
 
-const fieldOptions = [
-  { value: 'artist', label: '艺术家' },
-  { value: 'album', label: '专辑名称' },
-  { value: 'release_date', label: '发行日期' }
-];
+const api = useApi();
 
 const albumSongs = computed(() => {
-  return player.songs.filter(song => song.album === albumName && song.artist === artistName);
+  return player.songs.filter(song => song.album === albumName && song.artist === singerName);
 });
 
 const albumInfo = computed(() => {
@@ -43,8 +40,6 @@ const albumInfo = computed(() => {
     trackCount: albumSongs.value.length
   };
 });
-
-
 
 const openCorrectionModal = () => {
   if (!authStore.isAuthenticated) {
@@ -68,11 +63,16 @@ const submitCorrection = async () => {
     return;
   }
 
+  if (!correctionForm.value.reason.trim()) {
+    alert('请填写修正原因');
+    return;
+  }
+
   isSubmitting.value = true;
 
   try {
     const firstSong = albumSongs.value[0];
-    const response = await fetch('http://localhost:8080/api/corrections', {
+    const response = await fetch(`${api.url}/corrections/batch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

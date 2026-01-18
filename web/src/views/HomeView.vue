@@ -92,7 +92,7 @@ const shouldShowYear = (index: number) => {
                       ▶ 播放
                     </button>
                      <RouterLink
-                       :to="`/songer-${encodeURIComponent(albumGroup.artist.replace(/ /g, '_'))}/album-${encodeURIComponent(albumGroup.album.replace(/ /g, '_'))}`"
+                       :to="`/artist=${encodeURIComponent(albumGroup.artist.replace(/ /g, '_'))}/album=${encodeURIComponent(albumGroup.album.replace(/ /g, '_'))}`"
                        class="border-2 border-black px-4 py-2 font-black text-xs uppercase tracking-widest transition-all hover:bg-black hover:text-white inline-block"
                      >
                        详情

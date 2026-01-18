@@ -2,7 +2,7 @@ import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import type { Song, RepeatMode } from '@/types';
 
-const API_URL = 'http://localhost:8080/api';
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 export const usePlayerStore = defineStore('player', () => {
   const songs = ref<Song[]>([]);
