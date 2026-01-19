@@ -63,7 +63,16 @@ func main() {
 
 	// Auto migrate
 	log.Println("Running database migrations...")
-	db.AutoMigrate(&User{}, &Song{}, &Album{}, &Artist{}, &Correction{})
+	db.AutoMigrate(
+		&User{},
+		&Artist{},
+		&Album{},
+		&AlbumArtist{},
+		&Song{},
+		&SongArtist{},
+		&AlbumCorrection{},
+		&SongCorrection{},
+	)
 	log.Println("Database migrations completed")
 
 	// Initialize S3 client
@@ -103,9 +112,13 @@ func main() {
 	// Setup routes
 	SetupAuthRoutes(r, db)
 	SetupSongRoutes(r, db, s3Client)
-	SetupCorrectionRoutes(r, db)
-	SetupAdminRoutes(r, db)
+	SetupAlbumRoutes(r, db, s3Client)
+	SetupCorrectionRoutes(r, db, s3Client)
+	SetupAdminRoutes(r, db, s3Client)
 	log.Println("Routes configured")
+
+	r.Static("/uploads", "./uploads")
+	log.Println("Static file serving configured for /uploads")
 
 	// Start server
 	port := os.Getenv("PORT")

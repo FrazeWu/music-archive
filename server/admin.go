@@ -1,14 +1,16 @@
 package main
 
 import (
+	"log"
+	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
-	"net/http"
 )
 
-// AdminMiddleware validates admin privileges
 func AdminMiddleware(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userID, exists := c.Get("user_id")
@@ -35,144 +37,390 @@ func AdminMiddleware(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-func SetupAdminRoutes(router *gin.Engine, db *gorm.DB) {
+func SetupAdminRoutes(router *gin.Engine, db *gorm.DB, s3Client *s3.S3) {
 	admin := router.Group("/api/admin")
 	admin.Use(AuthMiddleware())
 	admin.Use(AdminMiddleware(db))
 	{
-		admin.GET("/pending", GetPendingRequestsHandler(db))
-		admin.POST("/approve/:id", ApproveSongHandler(db))
-		admin.POST("/reject/:id", RejectSongHandler(db))
-		admin.POST("/approve-batch", ApproveBatchHandler(db))
-		admin.POST("/reject-batch", RejectBatchHandler(db))
+		admin.GET("/pending", GetPendingSongsHandler(db))
+		admin.POST("/approve/:id", ApproveSongHandler(db, s3Client))
+		admin.POST("/reject/:id", RejectSongHandler(db, s3Client))
+
+		admin.GET("/pending-song-corrections", GetPendingSongCorrectionsHandler(db))
+		admin.POST("/approve-song-correction/:id", ApproveSongCorrectionHandler(db))
+		admin.POST("/reject-song-correction/:id", RejectSongCorrectionHandler(db))
+
+		admin.GET("/pending-albums", GetPendingAlbumsHandler(db))
+		admin.POST("/approve-album/:id", ApproveAlbumHandler(db, s3Client))
+		admin.POST("/reject-album/:id", RejectAlbumHandler(db, s3Client))
+
+		admin.GET("/pending-album-corrections", GetPendingAlbumCorrectionsHandler(db))
+		admin.POST("/approve-album-correction/:id", ApproveAlbumCorrectionHandler(db))
+		admin.POST("/reject-album-correction/:id", RejectAlbumCorrectionHandler(db, s3Client))
 	}
 }
 
-type PendingRequest struct {
-	ID        string    `json:"id"` // Unique Key for UI (BatchID or synthetic)
-	BatchID   string    `json:"batch_id"`
-	Album     string    `json:"album"`
-	Artist    string    `json:"artist"`
-	User      User      `json:"user"`
-	CreatedAt time.Time `json:"created_at"`
-	Count     int       `json:"count"`
-	Songs     []Song    `json:"songs"`
-	SongIDs   []uint    `json:"song_ids"`
-}
-
-type BatchActionInput struct {
-	IDs []uint `json:"ids" binding:"required"`
-}
-
-func GetPendingRequestsHandler(db *gorm.DB) gin.HandlerFunc {
+func GetPendingSongsHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var songs []Song
-		if err := db.Where("status = ?", "pending").Preload("User").Preload("Album").Preload("Album.Artist").Order("created_at desc").Find(&songs).Error; err != nil {
+		if err := db.Where("status = ?", "pending").
+			Preload("User").
+			Preload("Album").
+			Preload("Album.Artists").
+			Preload("Artists").
+			Order("created_at desc").
+			Find(&songs).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending songs"})
 			return
 		}
-
-		groups := make(map[string]*PendingRequest)
-		
-		for _, song := range songs {
-			key := song.BatchID
-			if key == "" {
-				// Fallback for legacy: Group by Album + User + Date
-				key = "legacy_" + song.Album.Title + "_" + song.User.Username + "_" + song.CreatedAt.Format("20060102")
-			}
-
-			if _, exists := groups[key]; !exists {
-				albumName := "Unknown"
-				artistName := "Unknown"
-				if song.Album != nil {
-					albumName = song.Album.Title
-					if song.Album.Artist.Name != "" {
-						artistName = song.Album.Artist.Name
-					}
-				}
-				
-				groups[key] = &PendingRequest{
-					ID:        key,
-					BatchID:   song.BatchID,
-					Album:     albumName,
-					Artist:    artistName,
-					User:      *song.User,
-					CreatedAt: song.CreatedAt,
-					Count:     0,
-					Songs:     []Song{},
-					SongIDs:   []uint{},
-				}
-			}
-			
-			groups[key].Count++
-			groups[key].Songs = append(groups[key].Songs, song)
-			groups[key].SongIDs = append(groups[key].SongIDs, song.ID)
-		}
-		
-		finalResult := make([]PendingRequest, 0, len(groups))
-		for _, req := range groups {
-			finalResult = append(finalResult, *req)
-		}
-		
-		// Sort by CreatedAt Desc
-		// (Need sort package, or just rely on map iteration being random and frontend sorting, 
-		// but typically Go maps are random. Let's not complicate with sort import yet if not strictly needed,
-		// but strictly speaking I should. I'll rely on frontend sorting or just leave as is for prototype)
-		
-		c.JSON(http.StatusOK, finalResult)
+		c.JSON(http.StatusOK, songs)
 	}
 }
 
-func ApproveBatchHandler(db *gorm.DB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var input BatchActionInput
-		if err := c.ShouldBindJSON(&input); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
-			return
-		}
-
-		if err := db.Model(&Song{}).Where("id IN ?", input.IDs).Update("status", "approved").Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve songs"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "Songs approved"})
-	}
-}
-
-func RejectBatchHandler(db *gorm.DB) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var input BatchActionInput
-		if err := c.ShouldBindJSON(&input); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
-			return
-		}
-
-		if err := db.Model(&Song{}).Where("id IN ?", input.IDs).Update("status", "rejected").Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject songs"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"message": "Songs rejected"})
-	}
-}
-
-func ApproveSongHandler(db *gorm.DB) gin.HandlerFunc {
+func ApproveSongHandler(db *gorm.DB, s3Client *s3.S3) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		if err := db.Model(&Song{}).Where("id = ?", id).Update("status", "approved").Error; err != nil {
+		now := time.Now()
+
+		var song Song
+		if err := db.First(&song, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Song not found"})
+			return
+		}
+
+		if song.AudioSource == "local" && song.AudioURL != "" {
+			localPath := GetLocalPathFromURL(song.AudioURL)
+			if localPath != "" {
+				s3URL, err := UploadLocalFileToS3(s3Client, localPath)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload audio to S3"})
+					return
+				}
+				song.AudioURL = s3URL
+				song.AudioSource = "s3"
+				DeleteLocalFile(localPath)
+			}
+		}
+
+		if song.CoverSource == "local" && song.CoverURL != "" {
+			localPath := GetLocalPathFromURL(song.CoverURL)
+			if localPath != "" {
+				s3URL, err := UploadLocalFileToS3(s3Client, localPath)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload cover to S3"})
+					return
+				}
+				song.CoverURL = s3URL
+				song.CoverSource = "s3"
+				DeleteLocalFile(localPath)
+			}
+		}
+
+		song.Status = "approved"
+
+		if err := db.Save(&song).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve song"})
 			return
 		}
+
+		_ = now
 		c.JSON(http.StatusOK, gin.H{"message": "Song approved"})
 	}
 }
 
-func RejectSongHandler(db *gorm.DB) gin.HandlerFunc {
+func RejectSongHandler(db *gorm.DB, s3Client *s3.S3) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id := c.Param("id")
-		if err := db.Model(&Song{}).Where("id = ?", id).Update("status", "rejected").Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject song"})
+		songID, err := strconv.ParseUint(id, 10, 32)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid song ID"})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "Song rejected"})
+
+		var song Song
+		if err := db.Preload("Album").First(&song, songID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Song not found"})
+			return
+		}
+
+		if song.AudioSource == "local" && song.AudioURL != "" {
+			localPath := GetLocalPathFromURL(song.AudioURL)
+			DeleteLocalFile(localPath)
+		}
+
+		if song.CoverSource == "local" && song.CoverURL != "" {
+			localPath := GetLocalPathFromURL(song.CoverURL)
+			DeleteLocalFile(localPath)
+		}
+
+		if err := deleteSongAndS3Objects(db, s3Client, &song); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete song and associated files"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Song rejected and deleted"})
+	}
+}
+
+func GetPendingSongCorrectionsHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var corrections []SongCorrection
+		if err := db.Where("status = ?", "pending").
+			Preload("User").
+			Preload("Song").
+			Order("created_at desc").
+			Find(&corrections).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending song corrections"})
+			return
+		}
+		c.JSON(http.StatusOK, corrections)
+	}
+}
+
+func ApproveSongCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		adminID, _ := c.Get("user_id")
+		now := time.Now()
+
+		var correction SongCorrection
+		if err := db.Preload("Song").First(&correction, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Correction not found"})
+			return
+		}
+
+		tx := db.Begin()
+
+		uid := uint(adminID.(float64))
+		if err := tx.Model(&SongCorrection{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":      "approved",
+			"approved_by": uid,
+			"approved_at": now,
+		}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve correction"})
+			return
+		}
+
+		song := correction.Song
+		updated := false
+
+		switch correction.FieldName {
+		case "title":
+			song.Title = correction.CorrectedValue
+			updated = true
+		case "lyrics":
+			song.Lyrics = correction.CorrectedValue
+			updated = true
+		}
+
+		if updated {
+			if err := tx.Save(&song).Error; err != nil {
+				tx.Rollback()
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply correction"})
+				return
+			}
+		}
+
+		tx.Commit()
+		c.JSON(http.StatusOK, gin.H{"message": "Song correction approved and applied"})
+	}
+}
+
+func RejectSongCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		adminID, _ := c.Get("user_id")
+		now := time.Now()
+
+		uid := uint(adminID.(float64))
+		if err := db.Model(&SongCorrection{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":      "rejected",
+			"rejected_by": uid,
+			"rejected_at": now,
+		}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject correction"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Song correction rejected"})
+	}
+}
+
+func GetPendingAlbumsHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var albums []Album
+		if err := db.Where("status = ?", "pending").
+			Preload("Artists").
+			Preload("User").
+			Order("created_at desc").
+			Find(&albums).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending albums"})
+			return
+		}
+		c.JSON(http.StatusOK, albums)
+	}
+}
+
+func ApproveAlbumHandler(db *gorm.DB, s3Client *s3.S3) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+
+		var album Album
+		if err := db.First(&album, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Album not found"})
+			return
+		}
+
+		if album.CoverSource == "local" && album.CoverURL != "" {
+			localPath := GetLocalPathFromURL(album.CoverURL)
+			if localPath != "" {
+				s3URL, err := UploadLocalFileToS3(s3Client, localPath)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload cover to S3"})
+					return
+				}
+				album.CoverURL = s3URL
+				album.CoverSource = "s3"
+				DeleteLocalFile(localPath)
+			}
+		}
+
+		album.Status = "approved"
+
+		if err := db.Save(&album).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve album"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Album approved"})
+	}
+}
+
+func RejectAlbumHandler(db *gorm.DB, s3Client *s3.S3) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		albumID, err := strconv.ParseUint(id, 10, 32)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid album ID"})
+			return
+		}
+
+		var album Album
+		if err := db.First(&album, albumID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Album not found"})
+			return
+		}
+
+		if album.CoverSource == "local" && album.CoverURL != "" {
+			localPath := GetLocalPathFromURL(album.CoverURL)
+			DeleteLocalFile(localPath)
+		}
+
+		if err := deleteAlbumAndS3Objects(db, s3Client, &album); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete album and associated files"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Album rejected and deleted"})
+	}
+}
+
+func GetPendingAlbumCorrectionsHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var corrections []AlbumCorrection
+		if err := db.Where("status = ?", "pending").
+			Preload("User").
+			Preload("Album").
+			Preload("Album.Artists").
+			Order("created_at desc").
+			Find(&corrections).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending album corrections"})
+			return
+		}
+		c.JSON(http.StatusOK, corrections)
+	}
+}
+
+func ApproveAlbumCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		adminID, _ := c.Get("user_id")
+		now := time.Now()
+
+		var correction AlbumCorrection
+		if err := db.Preload("Album").Preload("Album.Artists").First(&correction, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Correction not found"})
+			return
+		}
+
+		tx := db.Begin()
+
+		uid := uint(adminID.(float64))
+		if err := tx.Model(&AlbumCorrection{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":      "approved",
+			"approved_by": uid,
+			"approved_at": now,
+		}).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve correction"})
+			return
+		}
+
+		var album Album
+		if err := tx.First(&album, correction.AlbumID).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusNotFound, gin.H{"error": "Album not found"})
+			return
+		}
+
+		if correction.CorrectedTitle != "" {
+			album.Title = correction.CorrectedTitle
+		}
+		if correction.CorrectedCoverURL != "" {
+			album.CoverURL = correction.CorrectedCoverURL
+			album.CoverSource = correction.CorrectedCoverSource
+		}
+		if correction.CorrectedReleaseDate != nil {
+			album.ReleaseDate = *correction.CorrectedReleaseDate
+		}
+
+		if err := tx.Save(&album).Error; err != nil {
+			tx.Rollback()
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to apply album correction"})
+			return
+		}
+
+		tx.Commit()
+		c.JSON(http.StatusOK, gin.H{"message": "Album correction approved and applied"})
+	}
+}
+
+func RejectAlbumCorrectionHandler(db *gorm.DB, s3Client *s3.S3) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id := c.Param("id")
+		adminID, _ := c.Get("user_id")
+		now := time.Now()
+
+		var correction AlbumCorrection
+		if err := db.First(&correction, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Correction not found"})
+			return
+		}
+
+		uid := uint(adminID.(float64))
+		if err := db.Model(&AlbumCorrection{}).Where("id = ?", id).Updates(map[string]interface{}{
+			"status":      "rejected",
+			"rejected_by": uid,
+			"rejected_at": now,
+		}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject correction"})
+			return
+		}
+
+		if correction.CorrectedCoverURL != "" && correction.CorrectedCoverSource == "s3" {
+			log.Printf("Note: Should delete S3 object for rejected cover: %s", correction.CorrectedCoverURL)
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Album correction rejected"})
 	}
 }

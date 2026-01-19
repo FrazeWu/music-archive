@@ -35,7 +35,7 @@ const albumGroups = computed(() => {
     groups.get(key)!.songs.push(song);
   });
   
-  return Array.from(groups.values()).sort((a, b) => a.year - b.year);
+  return Array.from(groups.values()).sort((a, b) => b.year - a.year);
 });
 
 const shouldShowYear = (index: number) => {
@@ -76,7 +76,7 @@ const shouldShowYear = (index: number) => {
             <div class="bg-white border-2 border-black p-6 hover:shadow-[10px_10px_0px_0px_rgba(0,0,0,1)] transition-all duration-300">
               <div class="flex gap-6">
                 <img :src="albumGroup.cover_url || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect width=%22200%22 height=%22200%22 fill=%22%23000%22/%3E%3C/svg%3E'" 
-                     class="w-32 h-32 border-2 border-black grayscale object-cover flex-shrink-0" 
+                     class="w-32 h-32 border-2 border-black object-cover flex-shrink-0" 
                      :alt="albumGroup.album" />
                 <div class="flex flex-col justify-center flex-grow">
                   <h3 class="text-2xl font-black tracking-tight leading-tight">{{ albumGroup.album }}</h3>

@@ -3,7 +3,7 @@ server/.env.production
 server/all-kanye-backend
 *.log
 test_*
-AGENTS.md
+# AGENTS.md
 
 nginx/ssl/*.pem
 nginx/ssl/*.key
@@ -12,3 +12,4 @@ nginx/ssl/*.crt
 server/database.sqlite
 server/database.sqlite-shm
 server/database.sqlite-wal
+server/uploads

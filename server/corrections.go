@@ -2,13 +2,19 @@ package main
 
 import (
 	"log"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-type CorrectionInput struct {
+type SongCorrectionInput struct {
 	SongID         uint   `json:"song_id" binding:"required"`
 	FieldName      string `json:"field_name" binding:"required"`
 	CurrentValue   string `json:"current_value"`
@@ -16,32 +22,26 @@ type CorrectionInput struct {
 	Reason         string `json:"reason"`
 }
 
-type BatchCorrectionInput struct {
-	SongID      uint             `json:"song_id" binding:"required"`
-	Artist      string           `json:"artist"`
-	Album       string           `json:"album"`
-	ReleaseDate string           `json:"release_date"`
-	Reason      string           `json:"reason"`
-	Corrections []CorrectionItem `json:"corrections"`
+type AlbumCorrectionFormInput struct {
+	AlbumID              uint                  `form:"album_id" binding:"required"`
+	CorrectedTitle       string                `form:"corrected_title"`
+	CorrectedReleaseDate string                `form:"corrected_release_date"`
+	Reason               string                `form:"reason"`
+	Cover                *multipart.FileHeader `form:"cover"`
 }
 
-type CorrectionItem struct {
-	FieldName      string `json:"field_name" binding:"required"`
-	CurrentValue   string `json:"current_value"`
-	CorrectedValue string `json:"corrected_value" binding:"required"`
-}
-
-func SetupCorrectionRoutes(router *gin.Engine, db *gorm.DB) {
+func SetupCorrectionRoutes(router *gin.Engine, db *gorm.DB, s3Client *s3.S3) {
 	corrections := router.Group("/api/corrections")
 	{
-		corrections.POST("", AuthMiddleware(), CreateCorrectionHandler(db))
-		corrections.POST("/batch", AuthMiddleware(), CreateBatchCorrectionHandler(db))
+		corrections.POST("/song", AuthMiddleware(), CreateSongCorrectionHandler(db))
+		corrections.POST("/album", AuthMiddleware(), CreateAlbumCorrectionHandler(db, s3Client))
 	}
 }
 
-func CreateCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
+func CreateSongCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var uid uint
+		var userRole string
 		if idVal, exists := c.Get("user_id"); exists {
 			if fID, ok := idVal.(float64); ok {
 				uid = uint(fID)
@@ -49,37 +49,60 @@ func CreateCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 				uid = uID
 			}
 		}
+		if roleVal, exists := c.Get("role"); exists {
+			if role, ok := roleVal.(string); ok {
+				userRole = role
+			}
+		}
 
-		var input CorrectionInput
+		var input SongCorrectionInput
 
 		if err := c.ShouldBindJSON(&input); err != nil {
-			log.Printf("Correction input error: %v", err)
+			log.Printf("Song correction input error: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		correction := Correction{
+		status := "pending"
+		var approvedBy *uint
+		var approvedAt *time.Time
+		if userRole == "admin" {
+			status = "approved"
+			approvedBy = &uid
+			now := time.Now()
+			approvedAt = &now
+		}
+
+		correction := SongCorrection{
 			SongID:         input.SongID,
 			FieldName:      input.FieldName,
 			CurrentValue:   input.CurrentValue,
 			CorrectedValue: input.CorrectedValue,
 			Reason:         input.Reason,
 			UserID:         &uid,
+			Status:         status,
+			ApprovedBy:     approvedBy,
+			ApprovedAt:     approvedAt,
 		}
 
 		if err := db.Create(&correction).Error; err != nil {
-			log.Printf("Failed to create correction: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit correction"})
+			log.Printf("Failed to create song correction: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit song correction"})
 			return
 		}
 
-		c.JSON(http.StatusCreated, gin.H{"message": "Correction submitted successfully", "id": correction.ID})
+		c.JSON(http.StatusCreated, gin.H{
+			"message": "Song correction submitted successfully",
+			"id":      correction.ID,
+			"status":  status,
+		})
 	}
 }
 
-func CreateBatchCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
+func CreateAlbumCorrectionHandler(db *gorm.DB, s3Client *s3.S3) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var uid uint
+		var userRole string
 		if idVal, exists := c.Get("user_id"); exists {
 			if fID, ok := idVal.(float64); ok {
 				uid = uint(fID)
@@ -87,87 +110,112 @@ func CreateBatchCorrectionHandler(db *gorm.DB) gin.HandlerFunc {
 				uid = uID
 			}
 		}
+		if roleVal, exists := c.Get("role"); exists {
+			if role, ok := roleVal.(string); ok {
+				userRole = role
+			}
+		}
 
-		var input BatchCorrectionInput
-
-		if err := c.ShouldBindJSON(&input); err != nil {
-			log.Printf("Batch correction input error: %v", err)
+		var input AlbumCorrectionFormInput
+		if err := c.ShouldBind(&input); err != nil {
+			log.Printf("Album correction input error: %v", err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
-		log.Printf("Received batch correction: song_id=%d, artist=%s, album=%s, release_date=%s, reason=%s",
-			input.SongID, input.Artist, input.Album, input.ReleaseDate, input.Reason)
-
-		var corrections []Correction
-
-		if len(input.Corrections) > 0 {
-			for _, item := range input.Corrections {
-				if item.CorrectedValue != "" && item.CorrectedValue != item.CurrentValue {
-					corrections = append(corrections, Correction{
-						SongID:         input.SongID,
-						FieldName:      item.FieldName,
-						CurrentValue:   item.CurrentValue,
-						CorrectedValue: item.CorrectedValue,
-						Reason:         input.Reason,
-						UserID:         &uid,
-					})
-				}
-			}
-		} else {
-			if input.Artist != "" {
-				corrections = append(corrections, Correction{
-					SongID:         input.SongID,
-					FieldName:      "artist",
-					CorrectedValue: input.Artist,
-					Reason:         input.Reason,
-					UserID:         &uid,
-				})
-			}
-			if input.Album != "" {
-				corrections = append(corrections, Correction{
-					SongID:         input.SongID,
-					FieldName:      "album",
-					CorrectedValue: input.Album,
-					Reason:         input.Reason,
-					UserID:         &uid,
-				})
-			}
-			if input.ReleaseDate != "" {
-				corrections = append(corrections, Correction{
-					SongID:         input.SongID,
-					FieldName:      "release_date",
-					CorrectedValue: input.ReleaseDate,
-					Reason:         input.Reason,
-					UserID:         &uid,
-				})
-			}
-		}
-
-		if len(corrections) == 0 {
-			log.Printf("No valid corrections provided")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "没有提供有效的修正内容"})
+		var originalAlbum Album
+		if err := db.Preload("Artists").First(&originalAlbum, input.AlbumID).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Original album not found"})
 			return
 		}
 
-		log.Printf("Creating %d corrections", len(corrections))
+		hasChanges := input.CorrectedTitle != "" || input.CorrectedReleaseDate != "" || input.Cover != nil
 
-		if err := db.Create(&corrections).Error; err != nil {
-			log.Printf("Failed to create corrections: %v", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit corrections"})
+		if !hasChanges {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No changes provided"})
+			return
+		}
+
+		if hasChanges && input.Reason == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Reason is required for album corrections"})
+			return
+		}
+
+		status := "pending"
+		var approvedBy *uint
+		var approvedAt *time.Time
+		if userRole == "admin" {
+			status = "approved"
+			approvedBy = &uid
+			now := time.Now()
+			approvedAt = &now
+		}
+
+		correction := AlbumCorrection{
+			AlbumID:          input.AlbumID,
+			UserID:           &uid,
+			Status:           status,
+			Reason:           input.Reason,
+			OriginalTitle:    originalAlbum.Title,
+			OriginalCoverURL: originalAlbum.CoverURL,
+			ApprovedBy:       approvedBy,
+			ApprovedAt:       approvedAt,
+		}
+
+		if !originalAlbum.ReleaseDate.IsZero() {
+			correction.OriginalReleaseDate = &originalAlbum.ReleaseDate
+		}
+
+		if input.CorrectedTitle != "" {
+			correction.CorrectedTitle = input.CorrectedTitle
+		}
+
+		if input.CorrectedReleaseDate != "" {
+			parsedDate, err := time.Parse("2006-01-02", input.CorrectedReleaseDate)
+			if err == nil {
+				correction.CorrectedReleaseDate = &parsedDate
+			}
+		}
+
+		if input.Cover != nil {
+			log.Printf("Uploading new cover for album %d", input.AlbumID)
+			src, err := input.Cover.Open()
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to open cover file"})
+				return
+			}
+			defer src.Close()
+
+			safeAlbum := strings.ReplaceAll(originalAlbum.Title, "/", "-")
+			coverKey := "album_covers/pending/" + safeAlbum + "/" + input.Cover.Filename
+
+			_, err = s3Client.PutObject(&s3.PutObjectInput{
+				Bucket: aws.String(os.Getenv("S3_BUCKET")),
+				Key:    aws.String(coverKey),
+				Body:   src,
+				ACL:    aws.String("public-read"),
+			})
+			if err != nil {
+				log.Printf("Failed to upload cover to S3: %v", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload cover to S3"})
+				return
+			}
+			uploadedCoverURL := os.Getenv("S3_URL_PREFIX") + "/" + coverKey
+
+			correction.CorrectedCoverURL = uploadedCoverURL
+			correction.CorrectedCoverSource = "s3"
+		}
+
+		if err := db.Create(&correction).Error; err != nil {
+			log.Printf("Failed to create album correction: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to submit album correction"})
 			return
 		}
 
 		c.JSON(http.StatusCreated, gin.H{
-			"message":      "Corrections submitted successfully",
-			"count":        len(corrections),
-			"correction_ids": func() []uint {
-				ids := make([]uint, len(corrections))
-				for i, c := range corrections {
-					ids[i] = c.ID
-				}
-				return ids
-			}(),
+			"message": "Album correction submitted successfully",
+			"id":      correction.ID,
+			"status":  status,
 		})
 	}
 }

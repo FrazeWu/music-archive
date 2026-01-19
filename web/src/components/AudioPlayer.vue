@@ -35,7 +35,7 @@ const handleSeek = (e: MouseEvent) => {
         <div class="flex items-center gap-3">
           <img :src="player.currentSong.cover_url || 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2250%22 height=%2250%22%3E%3Crect width=%2250%22 height=%2250%22 fill=%22%23000%22/%3E%3C/svg%3E'" 
                :alt="player.currentSong.title" 
-               class="w-14 h-14 border border-black grayscale flex-shrink-0" />
+               class="w-14 h-14 border border-black flex-shrink-0" />
           <div class="overflow-hidden min-w-[180px]">
             <h4 class="font-bold truncate">{{ player.currentSong.title }}</h4>
             <p class="text-xs text-gray-500 truncate">{{ player.currentSong.artist }}</p>

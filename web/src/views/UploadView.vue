@@ -182,22 +182,27 @@ const handleSubmit = async () => {
     }
   }
   
-  isUploading.value = false;
-  currentTrackIndex.value = 0;
-  totalTracks.value = 0;
+   isUploading.value = false;
+   currentTrackIndex.value = 0;
+   totalTracks.value = 0;
 
-  if (successCount > 0) {
-    alert(`上传完成！成功: ${successCount} 首，失败: ${failCount} 首。等待管理员审核。`);
-     if (failCount === 0) {
-       formData.album = '';
-       formData.source = '';
-       tracks.value = [];
-       coverFile.value = null;
-       coverPreview.value = '';
-     }
-  } else {
-    alert('上传失败，请重试。');
-  }
+   if (successCount > 0) {
+     const isAdmin = authStore.user?.role === 'admin';
+     const message = isAdmin
+       ? `上传完成！成功: ${successCount} 首，失败: ${failCount} 首。内容已立即生效。`
+       : `上传完成！成功: ${successCount} 首，失败: ${failCount} 首。等待管理员审核。`;
+     alert(message);
+
+      if (failCount === 0) {
+        formData.album = '';
+        formData.source = '';
+        tracks.value = [];
+        coverFile.value = null;
+        coverPreview.value = '';
+      }
+   } else {
+     alert('上传失败，请重试。');
+   }
 };
 </script>
 
@@ -267,7 +272,7 @@ const handleSubmit = async () => {
           <p class="text-xs text-gray-400 mt-2">不上传将默认为纯黑色</p>
         </div>
         <div v-else class="relative border-2 border-black inline-block">
-          <img :src="coverPreview" class="w-48 h-48 object-cover grayscale" alt="封面预览" />
+          <img :src="coverPreview" class="w-48 h-48 object-cover" alt="封面预览" />
           <button 
             type="button"
             @click="removeCover"

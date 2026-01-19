@@ -22,7 +22,7 @@ const handleLogout = () => {
       </RouterLink>
       <nav class="flex gap-8 font-medium items-center">
         <RouterLink to="/" class="hover:underline">时间线</RouterLink>
-        <RouterLink to="/upload" class="hover:underline">上传</RouterLink>
+        <RouterLink v-if="authStore.isAuthenticated" to="/upload" class="hover:underline">上传</RouterLink>
 
         <RouterLink v-if="authStore.user?.role === 'admin'" to="/admin/review"
           class="text-red-600 hover:text-red-800 font-bold hover:underline">

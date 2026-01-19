@@ -38,6 +38,14 @@ const coverPreview = ref<string>('');
 const originalCoverUrl = ref<string>('');
 const draggingIndex = ref<number | null>(null);
 
+const originalFormData = reactive({
+  artist: '',
+  album: '',
+  releaseDate: '',
+});
+
+const reason = ref('');
+
 const isLoading = ref(true);
 const isSaving = ref(false);
 const currentTrackIndex = ref(0);
@@ -65,6 +73,10 @@ onMounted(async () => {
   formData.artist = firstSong.artist;
   formData.album = firstSong.album;
   formData.releaseDate = firstSong.release_date;
+
+  originalFormData.artist = firstSong.artist;
+  originalFormData.album = firstSong.album;
+  originalFormData.releaseDate = firstSong.release_date;
   
   originalCoverUrl.value = firstSong.cover_url || '';
   coverPreview.value = firstSong.cover_url || '';
@@ -181,14 +193,29 @@ const onDrop = (dropIndex: number) => {
 const handleSubmit = async () => {
   console.log('handleSubmit called');
   console.log('tracks:', tracks.value);
-  
+
   if (tracks.value.length === 0) {
     alert('至少需要保留一首歌曲');
     return;
   }
-  
-  if (!confirm('提交修改后将进入审核队列，管理员批准后才会生效。确定要提交吗？')) {
+
+  const isAdmin = authStore.user?.role === 'admin';
+  const confirmMessage = isAdmin
+    ? '确定要提交修改吗？管理员提交的内容将立即生效。'
+    : '提交修改后将进入审核队列，管理员批准后才会生效。确定要提交吗？';
+
+  if (!confirm(confirmMessage)) {
     console.log('User cancelled');
+    return;
+  }
+
+  const hasMetadataChanges =
+    formData.artist !== originalFormData.artist ||
+    formData.album !== originalFormData.album ||
+    formData.releaseDate !== originalFormData.releaseDate;
+
+  if (!isAdmin && hasMetadataChanges && !reason.value.trim()) {
+    alert('请填写修正原因');
     return;
   }
 
@@ -202,11 +229,90 @@ const handleSubmit = async () => {
   let failCount = 0;
   let duplicateCount = 0;
 
-  // 为所有歌曲创建新的待审核版本
+  const firstSong = albumSongs.value[0];
+  const albumId = firstSong?.album_id;
+
+  if (!albumId) {
+    alert('无法获取专辑 ID，请刷新页面重试');
+    isSaving.value = false;
+    return;
+  }
+
+  if (!isAdmin) {
+    if (hasMetadataChanges || coverFile.value) {
+      console.log('Regular user submitting album metadata/cover correction');
+
+      const correctionFormData = new FormData();
+      correctionFormData.append('album_id', String(albumId));
+      correctionFormData.append('artist', formData.artist);
+      correctionFormData.append('album', formData.album);
+      correctionFormData.append('releaseDate', formData.releaseDate);
+      correctionFormData.append('originalArtist', originalFormData.artist);
+      correctionFormData.append('originalAlbum', originalFormData.album);
+      correctionFormData.append('originalReleaseDate', originalFormData.releaseDate);
+      correctionFormData.append('reason', reason.value);
+      if (coverFile.value) {
+        correctionFormData.append('cover', coverFile.value);
+      }
+
+      try {
+        const response = await fetch(`${api.url}/corrections/album`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authStore.token}`,
+          },
+          body: correctionFormData
+        });
+
+        if (response.ok) {
+          console.log('Album correction submitted successfully');
+          successCount++;
+        } else {
+          const error = await response.json();
+          console.error('Failed to submit album correction:', error);
+          failCount++;
+        }
+      } catch (e) {
+        console.error('Error submitting album correction:', e);
+        failCount++;
+      }
+    }
+  } else {
+    if (coverFile.value) {
+      currentTrackIndex.value = 1;
+
+      try {
+        const albumData = new FormData();
+        albumData.append('cover', coverFile.value);
+
+        const response = await fetch(`${api.url}/albums/${albumId}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${authStore.token}`
+          },
+          body: albumData
+        });
+
+        if (response.ok) {
+          successCount++;
+          console.log('Album cover updated successfully');
+        } else {
+          const error = await response.json();
+          console.error('Failed to update album cover:', error);
+          failCount++;
+        }
+      } catch (e) {
+        console.error('Error updating album cover:', e);
+        failCount++;
+      }
+    }
+  }
+
+  // Original song processing logic (apply to all users, but statuses will differ on backend)
   for (let i = 0; i < tracks.value.length; i++) {
     const track = tracks.value[i];
     currentTrackIndex.value = i + 1;
-    
+
     console.log(`Processing track ${i + 1}/${tracks.value.length}:`, track.title);
 
     const data = new FormData();
@@ -216,7 +322,7 @@ const handleSubmit = async () => {
     data.append('release_date', formData.releaseDate);
     data.append('track_number', (i + 1).toString());
     data.append('batch_id', batchId);
-    
+
     // 如果是新歌曲，需要上传音频文件
     if (!track.isExisting && track.file) {
       data.append('audio', track.file);
@@ -226,13 +332,6 @@ const handleSubmit = async () => {
       if (originalSong) {
         data.append('audio_url', originalSong.audio_url);
       }
-    }
-    
-    // 如果是第一首歌且有封面，添加封面
-    if (i === 0 && coverFile.value) {
-      data.append('cover', coverFile.value);
-    } else if (i === 0 && !coverFile.value && originalCoverUrl.value) {
-      data.append('cover_url', originalCoverUrl.value);
     }
 
     try {
@@ -246,7 +345,7 @@ const handleSubmit = async () => {
       });
 
       console.log(`Response for ${track.title}:`, response.status, response.ok);
-      
+
       if (response.ok) {
         const result = await response.json();
         console.log('Result:', result);
@@ -268,18 +367,20 @@ const handleSubmit = async () => {
       console.error(`Error submitting ${track.title}`, e);
     }
   }
-  
+
   isSaving.value = false;
   currentTrackIndex.value = 0;
   totalTracks.value = 0;
 
   if (successCount > 0 || duplicateCount > 0) {
     let message = '提交完成！';
-    if (successCount > 0) message += `\n新增: ${successCount} 首`;
+    if (successCount > 0) message += `\n成功: ${successCount} 项`;
     if (duplicateCount > 0) message += `\n已存在(跳过): ${duplicateCount} 首`;
-    if (failCount > 0) message += `\n失败: ${failCount} 首`;
-    if (successCount > 0) message += '\n等待管理员批准后生效。';
-    
+    if (failCount > 0) message += `\n失败: ${failCount} 项`;
+
+    if (!isAdmin && successCount > 0) message += '\n等待管理员批准后生效。';
+    if (isAdmin && successCount > 0) message += '\n内容已立即生效。';
+
     alert(message);
     if (failCount === 0) {
       router.back();
@@ -356,7 +457,7 @@ const cancel = () => {
           <p class="text-xs text-gray-400 mt-2">不上传将保持原封面或默认为纯黑色</p>
         </div>
         <div v-else class="relative border-2 border-black inline-block">
-          <img :src="coverPreview" class="w-48 h-48 object-cover grayscale" alt="封面预览" />
+          <img :src="coverPreview" class="w-48 h-48 object-cover" alt="封面预览" />
           <button 
             type="button"
             @click="removeCover"
@@ -448,7 +549,14 @@ const cancel = () => {
         </div>
       </div>
 
-      <!-- Progress Display -->
+       <div class="space-y-4" v-if="authStore.user?.role !== 'admin'">
+         <label class="block text-sm font-black uppercase tracking-widest">修正原因 (仅在修改专辑信息时需要)</label>
+         <textarea v-model="reason" rows="3"
+           class="w-full border-2 border-black p-4 focus:shadow-[5px_5px_0px_0px_rgba(0,0,0,1)] outline-none transition-all resize-none"
+           placeholder="请详细说明修正原因"></textarea>
+       </div>
+
+       <!-- Progress Display -->
       <div v-if="isSaving" class="space-y-2 pt-4">
         <div class="flex justify-between items-center text-sm font-bold">
           <span>正在保存: {{ currentTrackIndex }} / {{ totalTracks }}</span>

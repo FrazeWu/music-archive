@@ -11,6 +11,14 @@ import (
 	"gorm.io/gorm"
 )
 
+func HashPassword(password string) (string, error) {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedPassword), nil
+}
+
 // RegisterInput represents user registration request
 type RegisterInput struct {
 	Username string `json:"username" binding:"required"`
